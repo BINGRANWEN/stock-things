@@ -556,7 +556,7 @@ function fetchSinaJSONP() {
             reject(new Error('Sina JSONP timeout'));
         }, 8000);
 
-        script.src = SINA_JSONP_URL + '&_=' + Date.now();
+        script.src = SINA_JSONP_URL;
         script.onload = function() {
             cleanup();
             var raw = window[varName];
