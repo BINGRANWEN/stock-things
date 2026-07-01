@@ -213,6 +213,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",s
 var POLL_INTERVAL = 5000;        // 交易时段轮询间隔（毫秒）
 var CLOSED_POLL_INTERVAL = 30000; // 非交易时段检查间隔
 var CODE = 'sh688256';
+var lastQuoteSnapshot = null;    // 最近一次成功拉取的行情快照
 
 // 新浪实时行情 JSONP（script标签注入，不受CORS限制）
 // 返回 var hq_str_sh688256="name,open,prev_close,price,high,low,..."
@@ -649,6 +650,7 @@ function poll() {
         // 交易时段：高频轮询
         fetchLiveQuote()
             .then(function(quote) {
+                lastQuoteSnapshot = quote;
                 applyLiveData(quote);
             })
             .catch(function(err) {
@@ -661,14 +663,16 @@ function poll() {
                 liveTimer = setTimeout(poll, POLL_INTERVAL);
             });
     } else {
-        // 非交易时段：低频检查（等待开盘）
+        // 非交易时段：低频检查 + 保留已拉取的数据
         if (isLive) {
             isLive = false;
-            setLiveBadge('closed', '○ 休市');
-            document.getElementById('data-source').textContent =
-                '数据来源：Tushare Pro · 历史日线 · 已收盘';
-        } else {
-            setLiveBadge('closed', '○ 休市');
+            var h = new Date().getHours();
+            var label = (h >= 12 && h < 13) ? '○ 午间休市' : '○ 休市';
+            setLiveBadge('closed', label);
+        }
+        // 如果还没有今天数据，再试一次
+        if (todayIdx < 0 && lastQuoteSnapshot) {
+            applyLiveData(lastQuoteSnapshot);
         }
         liveTimer = setTimeout(poll, CLOSED_POLL_INTERVAL);
     }
@@ -759,26 +763,39 @@ function updateTechMetrics(price, change, changePct) {
 //  启动实时引擎
 // ============================================================
 (function initLive() {
-    // 立即显示最后一笔历史收盘
+    // 先显示最后一笔历史收盘
     document.getElementById('live-price').textContent = lastClose.toFixed(2);
 
-    // 如果是交易日但已收盘，尝试获取今日最终数据
-    if (isWeekday(new Date())) {
-        fetchLiveQuote()
-            .then(function(quote) {
-                applyLiveData(quote);
-            })
-            .catch(function() {
-                // 获取失败，显示历史收盘
-                setLiveBadge('closed', '○ 休市');
-            })
-            .finally(function() {
-                poll();
-            });
-    } else {
+    if (!isWeekday(new Date())) {
         setLiveBadge('closed', '○ 周末休市');
         poll();
+        return;
     }
+
+    // 工作日：无论如何先拉一次实时快照（午休/盘前/盘后也能看到当天数据）
+    fetchLiveQuote()
+        .then(function(quote) {
+            applyLiveData(quote);
+            lastQuoteSnapshot = quote;
+            // 如果不在交易时段，标注状态但保留数据
+            if (!isTradingHours()) {
+                var h = new Date().getHours();
+                var label = (h >= 12 && h < 13) ? '○ 午间休市' : '○ 休市';
+                setLiveBadge('closed', label);
+                isLive = false;
+            }
+        })
+        .catch(function(err) {
+            console.log('[Live] 初始拉取失败:', err.message || err);
+            // 如果缓存里有快照，用缓存恢复
+            if (lastQuoteSnapshot) {
+                applyLiveData(lastQuoteSnapshot);
+            }
+            setLiveBadge('closed', '○ 休市');
+        })
+        .finally(function() {
+            poll();
+        });
 })();
 </script>
 </body>
